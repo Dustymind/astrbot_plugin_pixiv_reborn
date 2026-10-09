@@ -241,22 +241,6 @@
         "min": 1,
         "max": 8
     },
-    "collection_recursive_max_pages": {
-        "description": "递归模式（-r）单次最多发送的图片张数",
-        "type": "int",
-        "hint": "仅 /pixiv_collection -r 生效。递归模式会发送每个作品的全部页面，图量可能很大，此处限制累计张数上限（从珍藏册第一个作品开始累加，超出的作品跳过；至少会发第一个作品）。",
-        "default": 100,
-        "min": 1,
-        "max": 1000
-    },
-    "collection_recursive_interval_seconds": {
-        "description": "递归模式（-r）每张图片之间的间隔秒数",
-        "type": "int",
-        "hint": "仅 /pixiv_collection -r 生效。用于大图量时控速，避免触发平台侧发送频率限制。0 表示不限速。",
-        "default": 1,
-        "min": 0,
-        "max": 60
-    },
     "show_filter_result": {
         "description": "是否显示过滤内容提示",
         "type": "bool",

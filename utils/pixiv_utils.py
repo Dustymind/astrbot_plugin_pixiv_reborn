@@ -518,15 +518,6 @@ async def authenticate(client: AppPixivAPI) -> bool:
         return False
 
 
-async def _throttle_sleep(index: int, seconds: float) -> None:
-    """按张控速：第一张不等待，之后每张之间 sleep 指定秒数。
-
-    递归发送整本珍藏册时可能有几百张图，需要避免触发平台侧发送频率限制。
-    """
-    if index > 0 and seconds and seconds > 0:
-        await asyncio.sleep(seconds)
-
-
 async def send_pixiv_image(
     client: AppPixivAPI,
     event: Any,
@@ -534,7 +525,6 @@ async def send_pixiv_image(
     detail_message: str = None,
     show_details: bool = True,
     send_all_pages: bool = False,
-    throttle_seconds: float = 0.0,
 ):
     """
     通用Pixiv图片下载与发送函数。
@@ -575,8 +565,7 @@ async def send_pixiv_image(
             url_obj = SinglePageUrls(illust)
         url_sources.append((url_obj, detail_message))
 
-    for url_index, (url_obj, msg) in enumerate(url_sources):
-        await _throttle_sleep(url_index, throttle_seconds)
+    for url_obj, msg in url_sources:
         quality_preference = ["original", "large", "medium"]
         start_index = (
             quality_preference.index(_config.image_quality)
@@ -828,16 +817,15 @@ async def send_forward_message(
     send_all_pages: bool = False,
     summary_text: Optional[str] = None,
     single_batch: bool = False,
-    throttle_seconds: float = 0.0,
 ):
     """
     直接下载图片并组装 nodes，避免不兼容消息类型。
     自动检测动图并使用相应的处理方式。
     """
-    batch_size = len(images) if single_batch and images else 10
     nickname = "PixivBot"
     # 在处理转发消息之前，先清理可能存在的旧文件
     await clean_temp_dir(_temp_dir, max_files=20)
+
     class SinglePageUrls:
         def __init__(self, illust):
             self.original = getattr(illust.meta_single_page, "original_image_url", None)
@@ -867,7 +855,12 @@ async def send_forward_message(
                 url_obj = SinglePageUrls(img)
             image_items.append(("image", img, url_obj, detail_message))
 
-    forwarded_index = 0
+    # 批次大小必须在「多页作品展开之后」再算。
+    # single_batch 的语义是「所有图片放进一条转发」，若用展开前的作品数当批次大小，
+    # 递归发送整本珍藏册时会被切成很多条（实测 3 个作品共 56 页 → 19 条），
+    # 违背 single_response_mode「仅发送一条合并转发消息」的承诺。
+    batch_size = len(image_items) if single_batch and image_items else 10
+
     for i in range(0, len(image_items), batch_size):
         batch_items = image_items[i : i + batch_size]
         nodes_list = []
@@ -875,8 +868,6 @@ async def send_forward_message(
             nodes_list.append(Node(name=nickname, content=[Plain(summary_text)]))
         async with aiohttp.ClientSession() as session:
             for item_type, img, url_obj, detail_message in batch_items:
-                await _throttle_sleep(forwarded_index, throttle_seconds)
-                forwarded_index += 1
                 if item_type == "ugoira":
                     # 使用通用函数处理动图
                     content = await process_ugoira_for_content(

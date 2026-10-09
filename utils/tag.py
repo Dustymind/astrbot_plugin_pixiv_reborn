@@ -800,33 +800,6 @@ def sample_illusts(illusts, count, shuffle=False):
         return []
 
 
-def _count_pages(illust) -> int:
-    """读取作品页数，读不到按 1 页处理。"""
-    pages = _to_int(_get_value(illust, "page_count", "pageCount"))
-    return pages if pages and pages > 0 else 1
-
-
-def _limit_by_page_budget(illusts: List, max_pages):
-    """按累计页数上限截断作品列表，返回 (保留的作品, 被跳过的数量, 实际总页数)。
-
-    只在递归模式（发送每个作品的全部页面）下使用，避免一个珍藏册动辄几百张图。
-    始终至少保留第一个作品——否则遇到"单个作品页数就超过上限"时会一张都不发。
-    """
-    if not max_pages or max_pages <= 0:
-        return list(illusts), 0, sum(_count_pages(item) for item in illusts)
-
-    kept: List = []
-    total = 0
-    for illust in illusts:
-        pages = _count_pages(illust)
-        if kept and total + pages > max_pages:
-            break
-        kept.append(illust)
-        total += pages
-
-    return kept, len(illusts) - len(kept), total
-
-
 async def process_and_send_illusts_sorted(
     sorted_illusts,
     config: FilterConfig,
@@ -838,8 +811,6 @@ async def process_and_send_illusts_sorted(
     is_novel=False,
     summary_prefix: Optional[str] = None,
     send_all_pages: bool = False,
-    max_pages=None,
-    throttle_seconds: float = 0.0,
 ):
     """
     处理已排序的作品列表并发送
@@ -848,21 +819,12 @@ async def process_and_send_illusts_sorted(
         summary_prefix: 可选，拼在单消息汇总文本最前面的自定义内容
             （例如珍藏册的信息头）。仅在 single_response_mode 下生效。
         send_all_pages: 是否发送多页作品的全部页面（与 /pixiv_specific 行为一致）。
-        max_pages: 仅在 send_all_pages 生效时限制累计页数上限，超出的作品跳过。
-        throttle_seconds: 每张图片之间的间隔秒数，用于大图量场景控速。0 表示不限速。
+            发送方式（合并转发 / 逐条）仍由 single_response_mode 与 forward_threshold
+            决定，与插件其他命令完全一致。
     """
     filtered_illusts, filter_msgs = filter_illusts_with_reason(sorted_illusts, config)
     initial_count = len(sorted_illusts)
     filtered_count = len(filtered_illusts)
-
-    def _apply_page_budget(illusts):
-        """递归模式下按页数预算截断，返回 (作品, 提示文本)。"""
-        if not send_all_pages:
-            return illusts, ""
-        kept, dropped, _total = _limit_by_page_budget(illusts, max_pages)
-        if dropped:
-            return kept, f"⚠️ 已达页数上限 {max_pages}，有 {dropped} 个作品未发送。"
-        return kept, ""
 
     if config.single_response_mode:
         if not filtered_illusts:
@@ -875,9 +837,7 @@ async def process_and_send_illusts_sorted(
             return
 
         count_to_send = min(len(filtered_illusts), config.return_count)
-        illusts_to_send, page_note = _apply_page_budget(
-            filtered_illusts[:count_to_send]
-        )
+        illusts_to_send = filtered_illusts[:count_to_send]
         if not illusts_to_send:
             yield event.plain_result("筛选后没有符合条件的作品可发送。")
             return
@@ -889,15 +849,12 @@ async def process_and_send_illusts_sorted(
             filter_msgs if config.show_filter_result else [],
             summary_prefix=summary_prefix,
         )
-        if page_note:
-            summary_text = f"{summary_text}\n{page_note}"
         async for result in send_forward_message_func(
             client,
             event,
             illusts_to_send,
             lambda illust: build_detail_message_func(illust, is_novel=is_novel),
             send_all_pages=send_all_pages,
-            throttle_seconds=throttle_seconds,
             summary_text=summary_text,
             single_batch=True,
         ):
@@ -916,13 +873,10 @@ async def process_and_send_illusts_sorted(
         return
 
     count_to_send = min(len(filtered_illusts), config.return_count)
-    illusts_to_send, page_note = _apply_page_budget(filtered_illusts[:count_to_send])
+    illusts_to_send = filtered_illusts[:count_to_send]
 
     if not illusts_to_send:
         return
-
-    if page_note:
-        yield event.plain_result(page_note)
 
     if config.forward_threshold:
         async for result in send_forward_message_func(
@@ -931,7 +885,6 @@ async def process_and_send_illusts_sorted(
             illusts_to_send,
             lambda illust: build_detail_message_func(illust, is_novel=is_novel),
             send_all_pages=send_all_pages,
-            throttle_seconds=throttle_seconds,
         ):
             yield result
     else:
@@ -944,6 +897,5 @@ async def process_and_send_illusts_sorted(
                 detail_message,
                 show_details=config.show_details,
                 send_all_pages=send_all_pages,
-                throttle_seconds=throttle_seconds,
             ):
                 yield result

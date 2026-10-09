@@ -136,13 +136,15 @@ https://www.pixiv.net/collections/99190503582109340029
 /pixiv_collection 99190503582109340029 -r     # 开关位置不限
 ```
 
-一页作品可能有几十页，整本珍藏册很容易上百张图，所以递归模式会自动做两件事：
+`-r` 只改变「发哪些页」这一件事：解析出作品 ID 后，全部交给插件既有的发送模块处理，
+**发送方式（合并转发 / 逐条）与插件其他命令完全一致**，由 `single_response_mode`
+与 `forward_threshold` 决定，没有为递归模式另设任何机制。插件默认
+`single_response_mode=true`，因此默认就是把整本珍藏册打包成一条合并转发发出。
 
-- **强制逐条发送**（不再走单条合并转发）——几十上百张图塞进一条转发不现实
-- **限速 + 限页**：每张之间默认间隔 1 秒，累计张数默认上限 100 张。
-  发送很慢是正常的（100 张约需 100 秒），这是为了避免触发平台侧的发送频率限制
-
-可调参数见下方「相关配置」表。
+> **注意**：一个作品可能有几十页，整本珍藏册很容易上百张图。`-r` 不做限速也不截断，
+> 图片数量和发送节奏完全取决于你的配置。如果不想一次发太多，用 `collection_max_works`
+> 控制参与的作品数。若把 `single_response_mode` 关掉且 `forward_threshold` 为 false，
+> 就会变成逐张直发——几百张图会刷屏，慎用。
 
 以下链接形态都支持（也支持直接给裸 ID）：
 
@@ -159,11 +161,8 @@ https://www.pixiv.net/collections/99190503582109340029
 | `collection_include_novel` | true | 是否发送珍藏册内的小说 |
 | `collection_include_text` | true | 是否把纯文本块与外链汇总成摘要一并发送 |
 | `collection_fetch_concurrency` | 3 | 作品详情补全的并发数（WebUI 中隐藏，非必要不修改） |
-| `collection_recursive_max_pages` | 100 | 递归模式（`-r`）单次最多发送的图片张数（1-1000） |
-| `collection_recursive_interval_seconds` | 1 | 递归模式（`-r`）每张图片之间的间隔秒数（0-60，0 为不限速） |
 
 默认 `single_response_mode=true` 时会用合并转发发出，一条转发内含信息头 + 图片 + 详情。
-**递归模式 `-r` 会强制关闭单条合并转发**，改为逐条发送。
 
 ### 注意事项
 
@@ -275,7 +274,7 @@ https://www.pixiv.net/collections/99190503582109340029
 # 珍藏册功能
 /pixiv_collection https://www.pixiv.net/collections/99190503582109340029
 /pixiv_collection 99190503582109340029
-/pixiv_collection -r 99190503582109340029   # 递归：发送每个作品的全部页面（自动限速）
+/pixiv_collection -r 99190503582109340029   # 递归：发送每个作品的全部页面
 # 或者直接在聊天里贴链接，无需命令：
 # https://www.pixiv.net/collections/99190503582109340029
 
@@ -344,8 +343,6 @@ https://www.pixiv.net/collections/99190503582109340029
 | `collection_include_novel` | 珍藏册是否包含小说 | true |
 | `collection_include_text` | 珍藏册是否输出文本块与外链摘要 | true |
 | `collection_fetch_concurrency` | 珍藏册详情补全并发数（1-8，非必要不修改） | 3 |
-| `collection_recursive_max_pages` | 递归模式（`-r`）单次最多发送的图片张数（1-1000） | 100 |
-| `collection_recursive_interval_seconds` | 递归模式（`-r`）每张图片之间的间隔秒数（0-60，0 为不限速） | 1 |
 | `r18_mode` | R18内容处理模式 | 过滤 R18 |
 | `filter_r18g_only` | 是否额外过滤 R18G | false |
 | `ai_filter_mode` | AI作品显示设置 | 显示 AI 作品 |

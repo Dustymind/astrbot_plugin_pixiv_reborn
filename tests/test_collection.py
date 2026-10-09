@@ -86,11 +86,6 @@ from pixiv_plugin_under_test.handlers.collection import (  # noqa: E402
 )
 from pixiv_plugin_under_test.handlers.illust import IllustHandler  # noqa: E402
 from pixiv_plugin_under_test.handlers import collection as collection_module  # noqa: E402
-from pixiv_plugin_under_test.utils.tag import (  # noqa: E402
-    _count_pages,
-    _limit_by_page_budget,
-)
-from pixiv_plugin_under_test.utils.config import PixivConfig  # noqa: E402
 from pixiv_plugin_under_test.utils import pixiv_utils as pu  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures" / "collection"
@@ -288,55 +283,6 @@ class CommandSignatureTests(unittest.TestCase):
         self.assertIn("class GreedyStr(str)", source)
 
 
-class PageBudgetTests(unittest.TestCase):
-    """递归模式的累计页数预算。"""
-
-    @staticmethod
-    def _work(work_id: str, pages: int):
-        return _make_work(work_id, "illust", page_count=pages)
-
-    def test_count_pages_defaults_to_one(self):
-        self.assertEqual(_count_pages(SimpleNamespace()), 1)
-        self.assertEqual(_count_pages(SimpleNamespace(page_count=0)), 1)
-        self.assertEqual(_count_pages(SimpleNamespace(page_count=None)), 1)
-        self.assertEqual(_count_pages(SimpleNamespace(page_count=7)), 7)
-
-    def test_no_budget_keeps_everything(self):
-        works = [self._work("1", 3), self._work("2", 2)]
-        kept, dropped, total = _limit_by_page_budget(works, None)
-        self.assertEqual([w.id for w in kept], [1, 2])
-        self.assertEqual(dropped, 0)
-        self.assertEqual(total, 5)
-
-    def test_truncates_in_collection_order(self):
-        works = [self._work("1", 3), self._work("2", 3), self._work("3", 1)]
-        kept, dropped, total = _limit_by_page_budget(works, 5)
-        # 3 + 3 > 5 → 停在第二个作品
-        self.assertEqual([w.id for w in kept], [1])
-        self.assertEqual(dropped, 2)
-        self.assertEqual(total, 3)
-
-    def test_fits_multiple_works_within_budget(self):
-        works = [self._work("1", 2), self._work("2", 2), self._work("3", 2)]
-        kept, dropped, total = _limit_by_page_budget(works, 4)
-        self.assertEqual([w.id for w in kept], [1, 2])
-        self.assertEqual(dropped, 1)
-        self.assertEqual(total, 4)
-
-    def test_first_work_kept_even_when_oversized(self):
-        works = [self._work("1", 40), self._work("2", 1)]
-        kept, dropped, total = _limit_by_page_budget(works, 5)
-        self.assertEqual([w.id for w in kept], [1])
-        self.assertEqual(dropped, 1)
-        self.assertEqual(total, 40)
-
-    def test_zero_budget_means_unlimited(self):
-        works = [self._work("1", 3), self._work("2", 3)]
-        kept, dropped, _ = _limit_by_page_budget(works, 0)
-        self.assertEqual(len(kept), 2)
-        self.assertEqual(dropped, 0)
-
-
 class NormalizeCollectionTests(unittest.TestCase):
     def test_illust_only_dedupes_repeated_works(self):
         data = normalize_collection(ILLUST_ONLY_ID, load_fixture("illust_only.json"))
@@ -480,10 +426,9 @@ class FormattingTests(unittest.TestCase):
     def test_header_marks_recursive_mode(self):
         data = normalize_collection(ILLUST_ONLY_ID, load_fixture("illust_only.json"))
 
-        header = format_collection_header(data, recursive=True, max_pages=50)
+        header = format_collection_header(data, recursive=True)
 
         self.assertIn("递归", header)
-        self.assertIn("页数上限 50", header)
 
     def test_header_has_no_mode_line_by_default(self):
         data = normalize_collection(ILLUST_ONLY_ID, load_fixture("illust_only.json"))
@@ -554,13 +499,11 @@ def _make_work(work_id: str, kind: str, page_count: int = 1):
 
 
 class _FakeClientWrapper:
-    """替身：记录被请求的作品 ID，并可指定哪些 ID 应失败、各作品的页数。"""
+    """替身：记录被请求的作品 ID，并可指定哪些 ID 应失败。"""
 
-    def __init__(self, fail_ids=(), page_counts=None):
+    def __init__(self, fail_ids=()):
         self.requested = []
         self.fail_ids = set(fail_ids)
-        # 按「第几次请求」决定该作品的页数，未指定则 1 页
-        self.page_counts = list(page_counts or [])
         self.client_api = SimpleNamespace(
             illust_detail=ILLUST_DETAIL, novel_detail=NOVEL_DETAIL
         )
@@ -570,13 +513,11 @@ class _FakeClientWrapper:
 
     async def call_pixiv_api(self, func, *args, **kwargs):
         work_id = str(args[0])
-        index = len(self.requested)
         self.requested.append(work_id)
         if work_id in self.fail_ids:
             raise RuntimeError("simulated api failure")
-        pages = self.page_counts[index] if index < len(self.page_counts) else 1
         kind = "novel" if func is NOVEL_DETAIL else "illust"
-        return SimpleNamespace(**{kind: _make_work(work_id, kind, page_count=pages)})
+        return SimpleNamespace(**{kind: _make_work(work_id, kind)})
 
 
 def _collection_config(**overrides) -> SimpleNamespace:
@@ -586,8 +527,6 @@ def _collection_config(**overrides) -> SimpleNamespace:
         collection_include_novel=True,
         collection_include_text=True,
         collection_fetch_concurrency=3,
-        collection_recursive_max_pages=100,
-        collection_recursive_interval_seconds=1,
         proxy="",
         effective_proxy="",
         r18_mode="过滤 R18",
@@ -611,10 +550,7 @@ def _fake_forward(client, event, images, build_detail_message_func, **kwargs):
             "forward",
             [getattr(image, "id", None) for image in images],
             kwargs.get("summary_text"),
-            {
-                "send_all_pages": kwargs.get("send_all_pages", False),
-                "throttle_seconds": kwargs.get("throttle_seconds", 0.0),
-            },
+            {"send_all_pages": kwargs.get("send_all_pages", False)},
         )
 
     return generator()
@@ -626,10 +562,7 @@ def _fake_send_image(client, event, illust, detail_message, **kwargs):
             "image",
             getattr(illust, "id", None),
             detail_message,
-            {
-                "send_all_pages": kwargs.get("send_all_pages", False),
-                "throttle_seconds": kwargs.get("throttle_seconds", 0.0),
-            },
+            {"send_all_pages": kwargs.get("send_all_pages", False)},
         )
 
     return generator()
@@ -790,36 +723,21 @@ class HandleCollectionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("插画图片发送失败", message)
         self.assertIn("https://www.pixiv.net/artworks/", message)
 
-    async def test_recursive_mode_sends_all_pages_and_throttles(self):
-        # 前三个被请求的作品各 3 页
-        wrapper = _FakeClientWrapper(page_counts=[3, 3, 3])
-        config = _collection_config(
-            collection_max_works=50,
-            collection_recursive_max_pages=5,
-            collection_recursive_interval_seconds=2,
-        )
+    async def test_recursive_mode_packs_all_pages_into_one_forward(self):
+        """-r 只改「发哪些页」，发送方式仍走插件既有配置（默认单条合并转发 = 打包）。"""
+        wrapper = _FakeClientWrapper()
+        config = _collection_config(collection_max_works=50)
 
         results = await self._run_flow(
             "illust_only.json", ILLUST_ONLY_ID, config, wrapper, recursive=True
         )
 
-        # 递归模式强制逐条发送，不应出现合并转发
-        self.assertEqual([r for r in results if r[0] == "forward"], [])
-        images = [r for r in results if r[0] == "image"]
-        # 页数预算 5：第一个作品 3 页放行，累加到第二个就 3+3>5，停在这里
-        self.assertEqual([r[1] for r in images], [122208118])
-        self.assertTrue(images[0][3]["send_all_pages"])
-        self.assertEqual(images[0][3]["throttle_seconds"], 2)
-        # 信息头里标明递归模式与页数上限
-        header = next(
-            r[1] for r in results if r[0] == "plain" and "珍藏册" in str(r[1])
-        )
-        self.assertIn("递归", header)
-        self.assertIn("页数上限 5", header)
-        # 被预算跳过的作品要有提示
-        self.assertTrue(
-            any(r[0] == "plain" and "页数上限" in str(r[1]) for r in results)
-        )
+        forwards = [r for r in results if r[0] == "forward"]
+        self.assertEqual(len(forwards), 1)
+        # 交给既有发送模块时带上 send_all_pages=True，即每个作品发全部页面
+        self.assertTrue(forwards[0][3]["send_all_pages"])
+        # 信息头标明递归模式
+        self.assertIn("递归", forwards[0][2])
 
     async def test_non_recursive_keeps_first_page_only(self):
         wrapper = _FakeClientWrapper()
@@ -832,15 +750,14 @@ class HandleCollectionFlowTests(unittest.IsolatedAsyncioTestCase):
         forwards = [r for r in results if r[0] == "forward"]
         self.assertEqual(len(forwards), 1)
         self.assertFalse(forwards[0][3]["send_all_pages"])
-        self.assertEqual(forwards[0][3]["throttle_seconds"], 0.0)
+        self.assertNotIn("递归", forwards[0][2])
 
-    async def test_recursive_mode_respects_forward_threshold(self):
+    async def test_recursive_mode_follows_forward_threshold(self):
         wrapper = _FakeClientWrapper()
         config = _collection_config(
             collection_max_works=50,
+            single_response_mode=False,
             forward_threshold=True,
-            collection_recursive_max_pages=50,
-            collection_recursive_interval_seconds=0,
         )
 
         results = await self._run_flow(
@@ -851,13 +768,13 @@ class HandleCollectionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(forwards), 1)
         self.assertTrue(forwards[0][3]["send_all_pages"])
 
-    async def test_recursive_page_budget_never_silently_drops_everything(self):
-        # 第一个作品就 40 页，预算 5 —— 仍必须发出第一个作品
-        wrapper = _FakeClientWrapper(page_counts=[40])
+    async def test_recursive_mode_sends_per_image_when_forwarding_disabled(self):
+        """合并与转发都关掉时逐张直发，每张仍带 send_all_pages。"""
+        wrapper = _FakeClientWrapper()
         config = _collection_config(
-            collection_max_works=50,
-            collection_recursive_max_pages=5,
-            collection_recursive_interval_seconds=0,
+            collection_max_works=3,
+            single_response_mode=False,
+            forward_threshold=False,
         )
 
         results = await self._run_flow(
@@ -865,8 +782,39 @@ class HandleCollectionFlowTests(unittest.IsolatedAsyncioTestCase):
         )
 
         images = [r for r in results if r[0] == "image"]
-        self.assertEqual(len(images), 1)
-        self.assertEqual(images[0][1], 122208118)
+        self.assertEqual([r[1] for r in images], [122208118, 116940429, 129197711])
+        self.assertTrue(all(r[3]["send_all_pages"] for r in images))
+
+    async def test_command_entry_parses_recursive_flag_end_to_end(self):
+        """`/pixiv_collection -r <ID>` 经参数补齐后应进入递归模式。"""
+        wrapper = _FakeClientWrapper()
+        config = _collection_config(collection_max_works=50)
+        handler = collection_module.CollectionHandler(wrapper, config)
+        event = _make_event("pixiv_collection -r " + ILLUST_ONLY_ID)
+
+        with (
+            unittest.mock.patch.object(
+                collection_module,
+                "fetch_collection",
+                new=AsyncMock(return_value=load_fixture("illust_only.json")),
+            ),
+            unittest.mock.patch.object(
+                collection_module, "send_forward_message", new=_fake_forward
+            ),
+            unittest.mock.patch.object(
+                collection_module, "send_pixiv_image", new=_fake_send_image
+            ),
+            unittest.mock.patch.object(
+                collection_module, "DETAIL_REQUEST_MIN_INTERVAL", 0
+            ),
+        ):
+            # 模拟 AstrBot 只把第一个 token（`-r`）绑到形参的情形
+            arg_text = resolve_command_args(event, "pixiv_collection", "-r")
+            results = [item async for item in handler.pixiv_collection(event, arg_text)]
+
+        forwards = [r for r in results if r[0] == "forward"]
+        self.assertEqual(len(forwards), 1)
+        self.assertTrue(forwards[0][3]["send_all_pages"])
 
     async def test_flow_reports_error_message_on_fetch_failure(self):
         handler = collection_module.CollectionHandler(
@@ -914,6 +862,7 @@ def _make_event(text: str) -> SimpleNamespace:
     event = SimpleNamespace()
     event.message_str = text
     event.plain_result = lambda message: ("plain", message)
+    event.chain_result = lambda components: ("chain", components)
     return event
 
 
@@ -971,80 +920,88 @@ class UrlRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("COLLECTED", results)
 
 
-class RecursiveConfigTests(unittest.TestCase):
-    """递归模式新增配置项的读取与默认值。"""
+class ForwardBatchingTests(unittest.IsolatedAsyncioTestCase):
+    """`single_batch=True` 的语义是「所有图片放进一条转发」。
 
-    def test_defaults(self):
-        config = PixivConfig({"refresh_token": "fake"})
-        self.assertEqual(config.collection_recursive_max_pages, 100)
-        self.assertEqual(config.collection_recursive_interval_seconds, 1)
+    多页作品是在组装阶段才被展开的，所以批次大小必须在展开**之后**计算。
+    否则递归发送整本珍藏册时会被切成很多条，违背 single_response_mode
+    「仅发送一条合并转发消息」的承诺（实测 3 个作品共 56 页曾被切成 19 条）。
+    """
 
-    def test_explicit_values(self):
-        config = PixivConfig(
-            {
-                "refresh_token": "fake",
-                "collection_recursive_max_pages": 42,
-                "collection_recursive_interval_seconds": 3,
-            }
-        )
-        self.assertEqual(config.collection_recursive_max_pages, 42)
-        self.assertEqual(config.collection_recursive_interval_seconds, 3)
+    class _Comp:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
 
-    def test_interval_zero_means_unlimited_and_must_survive(self):
-        """0 是「不限速」的合法取值，不能被当成空值替换成默认的 1。"""
-        config = PixivConfig(
-            {"refresh_token": "fake", "collection_recursive_interval_seconds": 0}
-        )
-        self.assertEqual(config.collection_recursive_interval_seconds, 0)
+    class _Nodes:
+        def __init__(self, nodes=None, **kwargs):
+            self.nodes = nodes or []
 
-    def test_interval_accepts_numeric_string(self):
-        config = PixivConfig(
-            {"refresh_token": "fake", "collection_recursive_interval_seconds": "5"}
-        )
-        self.assertEqual(config.collection_recursive_interval_seconds, 5)
+    async def _collect(self, *, page_counts, single_batch):
+        class _Illust:
+            def __init__(self, work_id, pages):
+                self.id = work_id
+                self.type = "illust"
+                self.page_count = pages
+                self.meta_pages = [
+                    SimpleNamespace(
+                        image_urls=SimpleNamespace(
+                            large=f"large-{work_id}-{i}", medium=f"medium-{i}"
+                        )
+                    )
+                    for i in range(pages)
+                ]
+                self.meta_single_page = SimpleNamespace(original_image_url="orig")
+                self.image_urls = SimpleNamespace(large="large", medium="medium")
 
-    def test_negative_interval_is_clamped_to_zero(self):
-        config = PixivConfig(
-            {"refresh_token": "fake", "collection_recursive_interval_seconds": -3}
-        )
-        self.assertEqual(config.collection_recursive_interval_seconds, 0)
+        images = [_Illust(100 + i, n) for i, n in enumerate(page_counts)]
+        event = _make_event("")
+        config = SimpleNamespace(show_details=False, image_quality="large")
 
-    def test_invalid_values_fall_back_to_default(self):
-        config = PixivConfig(
-            {
-                "refresh_token": "fake",
-                "collection_recursive_max_pages": "abc",
-                "collection_recursive_interval_seconds": None,
-            }
-        )
-        self.assertEqual(config.collection_recursive_max_pages, 100)
-        self.assertEqual(config.collection_recursive_interval_seconds, 1)
+        async def fake_download(session, url, headers=None):
+            return b"image-bytes"
 
+        async def fake_clean(*args, **kwargs):
+            return None
 
-class ThrottleSleepTests(unittest.IsolatedAsyncioTestCase):
-    """递归模式的按张控速：第一张不等待，之后每张之间等待。"""
+        async def fake_build(data, ext=".jpg"):
+            return self._Comp()
 
-    async def test_waits_between_items_but_not_before_the_first(self):
-        with unittest.mock.patch.object(
-            pu.asyncio, "sleep", new=AsyncMock()
-        ) as sleep_mock:
-            await pu._throttle_sleep(0, 1.0)
-            await pu._throttle_sleep(1, 1.0)
-            await pu._throttle_sleep(2, 0.5)
+        with (
+            unittest.mock.patch.object(pu, "_config", config),
+            unittest.mock.patch.object(pu, "_temp_dir", None),
+            unittest.mock.patch.object(pu, "clean_temp_dir", new=fake_clean),
+            unittest.mock.patch.object(pu, "download_image", new=fake_download),
+            unittest.mock.patch.object(pu, "_build_image_from_bytes", new=fake_build),
+            unittest.mock.patch.object(pu, "Node", new=self._Comp),
+            unittest.mock.patch.object(pu, "Nodes", new=self._Nodes),
+            unittest.mock.patch.object(pu, "Plain", new=self._Comp),
+        ):
+            return [
+                result
+                async for result in pu.send_forward_message(
+                    None,
+                    event,
+                    images,
+                    lambda img: "detail",
+                    send_all_pages=True,
+                    single_batch=single_batch,
+                )
+            ]
 
-        self.assertEqual(
-            [call.args[0] for call in sleep_mock.await_args_list], [1.0, 0.5]
-        )
+    async def test_single_batch_packs_every_page_into_one_message(self):
+        results = await self._collect(page_counts=[19, 15, 22], single_batch=True)
 
-    async def test_zero_or_missing_interval_never_sleeps(self):
-        with unittest.mock.patch.object(
-            pu.asyncio, "sleep", new=AsyncMock()
-        ) as sleep_mock:
-            await pu._throttle_sleep(1, 0)
-            await pu._throttle_sleep(2, 0.0)
-            await pu._throttle_sleep(3, None)
+        self.assertEqual(len(results), 1, "应只发一条转发")
+        nodes_obj = results[0][1][0]
+        # 19 + 15 + 22 = 56 张，全部在同一个转发里
+        self.assertEqual(len(nodes_obj.nodes), 56)
 
-        sleep_mock.assert_not_awaited()
+    async def test_without_single_batch_still_batches_by_ten(self):
+        results = await self._collect(page_counts=[19, 15, 22], single_batch=False)
+
+        # ceil(56 / 10) = 6
+        self.assertEqual(len(results), 6)
 
 
 class FallbackTextTests(unittest.TestCase):

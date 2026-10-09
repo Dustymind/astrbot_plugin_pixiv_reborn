@@ -333,9 +333,7 @@ def normalize_collection(
     return result
 
 
-def format_collection_header(
-    data: CollectionData, *, recursive: bool = False, max_pages: Optional[int] = None
-) -> str:
+def format_collection_header(data: CollectionData, *, recursive: bool = False) -> str:
     """构建珍藏册的信息头。"""
     lines = ["📚 Pixiv 珍藏册", f"标题: {data.title}"]
     author_line = f"作者: {data.author}"
@@ -360,10 +358,7 @@ def format_collection_header(
     lines.append("内容: " + " / ".join(counts))
 
     if recursive:
-        mode_line = "模式: 递归（发送每个作品的全部页面）"
-        if max_pages:
-            mode_line += f"，页数上限 {max_pages}"
-        lines.append(mode_line)
+        lines.append("模式: 递归（发送每个作品的全部页面）")
 
     stats = []
     if data.bookmark_count is not None:
@@ -483,13 +478,7 @@ class CollectionHandler:
             yield event.plain_result("解析珍藏册时发生未知错误，请查看日志。")
             return
 
-        header = format_collection_header(
-            data,
-            recursive=recursive,
-            max_pages=(
-                self.pixiv_config.collection_recursive_max_pages if recursive else None
-            ),
-        )
+        header = format_collection_header(data, recursive=recursive)
 
         if self.pixiv_config.collection_include_text:
             trailing = format_trailing_sections(data)
@@ -704,13 +693,6 @@ class CollectionHandler:
         """按配置过滤并发送一组作品。"""
         max_works = max(1, int(self.pixiv_config.collection_max_works or 1))
 
-        # 递归模式行为对齐 /pixiv_specific：逐条发送每个作品的全部页面。
-        # 因此强制关闭单条合并转发——几十上百张图塞进一条转发既不现实、
-        # 也拿不到「按张控速」的效果。
-        single_response_mode = (
-            False if recursive else self.pixiv_config.single_response_mode
-        )
-
         config = FilterConfig(
             r18_mode=self.pixiv_config.r18_mode,
             filter_r18g_only=self.pixiv_config.filter_r18g_only,
@@ -720,7 +702,7 @@ class CollectionHandler:
             return_count=max(1, min(len(works), max_works)),
             logger=logger,
             show_filter_result=self.pixiv_config.show_filter_result,
-            single_response_mode=single_response_mode,
+            single_response_mode=self.pixiv_config.single_response_mode,
             show_details=self.pixiv_config.show_details,
             excluded_tags=[],
             forward_threshold=self.pixiv_config.forward_threshold,
@@ -728,17 +710,12 @@ class CollectionHandler:
             enable_stat_filters=not is_novel,
         )
 
-        send_options: dict = {}
-        if recursive:
-            send_options = {
-                "send_all_pages": True,
-                "max_pages": self.pixiv_config.collection_recursive_max_pages,
-                "throttle_seconds": (
-                    self.pixiv_config.collection_recursive_interval_seconds
-                ),
-            }
+        # 递归模式唯一多做的事就是「发全部页面」（对齐 /pixiv_specific 的
+        # send_all_pages=True）。发送方式「合并转发 / 逐条」完全交给插件既有配置
+        # （single_response_mode / forward_threshold），与其他命令没有区别。
+        send_options = {"send_all_pages": True} if recursive else {}
 
-        if single_response_mode:
+        if config.single_response_mode:
             async for result in process_and_send_illusts_sorted(
                 works,
                 config,
