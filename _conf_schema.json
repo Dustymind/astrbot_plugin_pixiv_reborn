@@ -207,6 +207,40 @@
         "hint": "设置为 true 时启用 Pixiv URL 搜索，false 时禁用。",
         "default": true
     },
+    "collection_enabled": {
+        "description": "是否启用 Pixiv 珍藏册（Collection）解析",
+        "type": "bool",
+        "hint": "开启后，聊天中出现 https://www.pixiv.net/collections/<ID> 链接会自动解析并发送其中作品。珍藏册走网页版接口（App API 无此端点），属于非官方接口，pixiv 改版可能失效。",
+        "default": true
+    },
+    "collection_max_works": {
+        "description": "珍藏册单次最多发送的作品数（插画与小说分别计算）",
+        "type": "int",
+        "hint": "珍藏册可能包含几十个作品，此处限制单次最多发送多少个。插画与小说各自受此上限约束，都属于上限内的正常行为。注意详情补全是逐个大调用 Pixiv API，数值过大会较慢。",
+        "default": 30,
+        "min": 1,
+        "max": 200
+    },
+    "collection_include_novel": {
+        "description": "珍藏册是否包含小说",
+        "type": "bool",
+        "hint": "设置为 true 时，珍藏册内的小说格子也会发送；false 则只发插画。",
+        "default": true
+    },
+    "collection_include_text": {
+        "description": "珍藏册是否输出文本块与外链摘要",
+        "type": "bool",
+        "hint": "设置为 true 时，珍藏册内的纯文本格子与外链会汇总成摘要一并发送；false 则只发作品。",
+        "default": true
+    },
+    "collection_fetch_concurrency": {
+        "description": "珍藏册详情补全并发数",
+        "type": "int",
+        "hint": "非必要不修改。补全作品详情时的并发请求数，过高可能触发 Pixiv 限流。",
+        "default": 3,
+        "min": 1,
+        "max": 8
+    },
     "show_filter_result": {
         "description": "是否显示过滤内容提示",
         "type": "bool",

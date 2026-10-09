@@ -102,6 +102,16 @@ class PixivConfig:
         self.min_views = self.config.get("min_views", 0)
         self.min_likes = self.config.get("min_likes", 0)
         self.pixiv_urlsearch_enabled = self.config.get("pixiv_urlsearch_enabled", True)
+        # Pixiv 珍藏册（Collection）：走网页版 AJAX 接口，不走 App API
+        self.collection_enabled = self.config.get("collection_enabled", True)
+        self.collection_max_works = self._get_int("collection_max_works", 30)
+        self.collection_include_novel = self.config.get(
+            "collection_include_novel", True
+        )
+        self.collection_include_text = self.config.get("collection_include_text", True)
+        self.collection_fetch_concurrency = self._get_int(
+            "collection_fetch_concurrency", 3
+        )
         self.show_filter_result = self.config.get("show_filter_result", True)
         self.single_response_mode = self.config.get("single_response_mode", True)
         self.show_details = self.config.get("show_details", True)
@@ -196,6 +206,8 @@ class PixivConfig:
             f"ai_filter_mode='{self.ai_filter_mode}', "
             f"ai_detection_mode='{self.ai_detection_mode}', "
             f"min_bookmarks={self.min_bookmarks}, min_views={self.min_views}, min_likes={self.min_likes}, "
+            f"collection_enabled={self.collection_enabled}, "
+            f"collection_max_works={self.collection_max_works}, "
             f"show_details={self.show_details}, "
             f"refresh_interval={self.refresh_interval} 分钟, "
             f"subscription_enabled={self.subscription_enabled}, "
@@ -240,6 +252,16 @@ class PixivConfigManager:
             "min_views": {"type": "int", "min": 0, "max": 100000000},
             "min_likes": {"type": "int", "min": 0, "max": 100000000},
             "return_count": {"type": "int", "min": 1, "max": 30},
+            "collection_enabled": {"type": "bool"},
+            "collection_max_works": {"type": "int", "min": 1, "max": 200},
+            "collection_include_novel": {"type": "bool"},
+            "collection_include_text": {"type": "bool"},
+            "collection_fetch_concurrency": {
+                "type": "int",
+                "min": 1,
+                "max": 8,
+                "hidden": True,
+            },
             "show_filter_result": {"type": "bool"},
             "single_response_mode": {"type": "bool"},
             "show_details": {"type": "bool"},
@@ -313,6 +335,10 @@ class PixivConfigManager:
             "min_bookmarks",
             "min_views",
             "min_likes",
+            "collection_enabled",
+            "collection_max_works",
+            "collection_include_novel",
+            "collection_include_text",
             "show_filter_result",
             "single_response_mode",
             "show_details",

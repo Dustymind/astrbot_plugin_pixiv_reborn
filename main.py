@@ -18,6 +18,7 @@ from .utils.config import PixivConfig, PixivConfigManager
 
 from .core.client import PixivClientWrapper
 from .handlers.illust import IllustHandler
+from .handlers.collection import CollectionHandler
 from .handlers.user import UserHandler
 from .handlers.novel import NovelHandler
 from .handlers.subscribe import SubscribeHandler
@@ -51,7 +52,12 @@ class PixivSearchPlugin(Star):
         self.client = self.client_wrapper.client_api
 
         # 3. 初始化各个子系统 (Handlers)，把工具给它们
-        self.illust_handler = IllustHandler(self.client_wrapper, self.pixiv_config)
+        self.collection_handler = CollectionHandler(
+            self.client_wrapper, self.pixiv_config
+        )
+        self.illust_handler = IllustHandler(
+            self.client_wrapper, self.pixiv_config, self.collection_handler
+        )
         self.user_handler = UserHandler(self.client_wrapper, self.pixiv_config)
         self.novel_handler = NovelHandler(self.client_wrapper, self.pixiv_config)
         self.subscribe_handler = SubscribeHandler(
@@ -128,7 +134,7 @@ class PixivSearchPlugin(Star):
             "name": "pixiv_search",
             "author": "vmoranv",
             "description": "Pixiv 图片搜索",
-            "version": "1.7.5",
+            "version": "1.7.5.1",
             "homepage": "https://github.com/vmoranv-reborn/astrbot_plugin_pixiv_search",
         }
 
@@ -175,6 +181,15 @@ class PixivSearchPlugin(Star):
     async def pixiv_specific(self, event: AstrMessageEvent, illust_id: str = ""):
         """根据作品 ID 获取特定作品详情"""
         async for result in self.illust_handler.pixiv_specific(event, illust_id):
+            yield result
+
+    @command("pixiv_collection")
+    async def pixiv_collection(self, event: AstrMessageEvent, args: str = ""):
+        """解析 Pixiv 珍藏册（Collection），发送其中的插画与小说
+
+        用法: /pixiv_collection <珍藏册链接或ID>
+        """
+        async for result in self.collection_handler.pixiv_collection(event, args):
             yield result
 
     @command("pixiv_ranking")

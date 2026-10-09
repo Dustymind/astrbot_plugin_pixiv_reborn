@@ -412,7 +412,11 @@ def filter_illusts_with_reason(illusts, config: FilterConfig):
 
 
 def _build_single_response_summary(
-    initial_count: int, filtered_count: int, send_count: int, filter_msgs: List[str]
+    initial_count: int,
+    filtered_count: int,
+    send_count: int,
+    filter_msgs: List[str],
+    summary_prefix: Optional[str] = None,
 ) -> str:
     """构建单消息模式下的汇总文本。"""
     summary_lines = [
@@ -420,7 +424,10 @@ def _build_single_response_summary(
     ]
     if filter_msgs:
         summary_lines.extend(filter_msgs)
-    return "\n".join(summary_lines)
+    summary = "\n".join(summary_lines)
+    if summary_prefix:
+        return f"{summary_prefix}\n\n{summary}"
+    return summary
 
 
 def format_tags(tags) -> str:
@@ -802,9 +809,14 @@ async def process_and_send_illusts_sorted(
     send_pixiv_image_func,
     send_forward_message_func,
     is_novel=False,
+    summary_prefix: Optional[str] = None,
 ):
     """
     处理已排序的作品列表并发送
+
+    Args:
+        summary_prefix: 可选，拼在单消息汇总文本最前面的自定义内容
+            （例如珍藏册的信息头）。仅在 single_response_mode 下生效。
     """
     filtered_illusts, filter_msgs = filter_illusts_with_reason(sorted_illusts, config)
     initial_count = len(sorted_illusts)
@@ -831,6 +843,7 @@ async def process_and_send_illusts_sorted(
             filtered_count,
             len(illusts_to_send),
             filter_msgs if config.show_filter_result else [],
+            summary_prefix=summary_prefix,
         )
         async for result in send_forward_message_func(
             client,

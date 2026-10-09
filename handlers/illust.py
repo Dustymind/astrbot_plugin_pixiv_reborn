@@ -14,25 +14,46 @@ from ..utils.pixiv_utils import send_pixiv_image, send_forward_message
 
 from ..utils.help import get_help_message
 
+from .collection import parse_collection_id
+
 
 class IllustHandler:
-    def __init__(self, client_wrapper, pixiv_config):
+    def __init__(self, client_wrapper, pixiv_config, collection_handler=None):
         """
         初始化插画处理器
         :param client_wrapper: 封装好的 PixivClientWrapper 实例 (Core)
         :param config: PixivConfig 实例 (Config)
+        :param collection_handler: 可选的珍藏册处理器，用于处理珍藏册链接
         """
 
         self.client_wrapper = client_wrapper
         self.client = client_wrapper.client_api
         self.pixiv_config = pixiv_config
+        self.collection_handler = collection_handler
 
     async def pixiv_msg_url(self, event: AstrMessageEvent, msg: str = ""):
-        """处理接受的消息，查看是否为 https://www.pixiv.net/artworks/xxxx 形式的 URL，并获取作品信息"""
+        """处理接受的消息。
+
+        支持两种 URL：
+          - https://www.pixiv.net/artworks/xxxx          作品详情
+          - https://www.pixiv.net/collections/xxxx       珍藏册（珍藏册 ID 为大整数）
+        珍藏册链接也可形如 https://www.pixiv.net/users/<uid>/collections/<id>。
+        """
+        msg = event.message_str.strip()  # 去除首尾空白字符
+
+        # 珍藏册链接。珍藏册走网页版 AJAX 接口，与 artworks 分支互不重叠。
+        if self.pixiv_config.collection_enabled and self.collection_handler is not None:
+            collection_id = parse_collection_id(msg)
+            if collection_id:
+                async for result in self.collection_handler.handle_collection_id(
+                    event, collection_id
+                ):
+                    yield result
+                return
+
         # 检查是否启用了 Pixiv URL 搜索功能
         if not self.pixiv_config.pixiv_urlsearch_enabled:
             return
-        msg = event.message_str.strip() # 去除首尾空白字符
         # 检查是否为 Pixiv 插画 URL
         if msg.startswith("https://www.pixiv.net/artworks/"):
             try:
