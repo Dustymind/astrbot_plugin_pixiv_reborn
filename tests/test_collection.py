@@ -7,6 +7,7 @@ fixture 来自真实接口响应（已裁剪掉解析用不到的字段），用
     - 接口错误信封的异常路径
 """
 
+import ast
 import json
 import sys
 import types
@@ -81,6 +82,7 @@ from pixiv_plugin_under_test.handlers.collection import (  # noqa: E402
     format_trailing_sections,
     normalize_collection,
     parse_collection_id,
+    resolve_command_args,
 )
 from pixiv_plugin_under_test.handlers.illust import IllustHandler  # noqa: E402
 from pixiv_plugin_under_test.handlers import collection as collection_module  # noqa: E402
@@ -168,6 +170,122 @@ class RecursiveFlagTests(unittest.TestCase):
         )
         self.assertTrue(recursive)
         self.assertEqual(parse_collection_id(rest), ILLUST_ONLY_ID)
+
+
+class ResolveCommandArgsTests(unittest.TestCase):
+    """AstrBot 只把第一个 token 绑给形参，其余要从消息文本补齐。
+
+    否则 `/pixiv_collection -r <ID>` 只能拿到 `-r`，ID 被丢弃。
+    """
+
+    def _event(self, message_str: str):
+        return SimpleNamespace(message_str=message_str)
+
+    def test_recovers_tokens_lost_by_positional_binding(self):
+        event = self._event("pixiv_collection -r 99190503582109340029")
+        self.assertEqual(
+            resolve_command_args(event, "pixiv_collection", "-r"),
+            "-r 99190503582109340029",
+        )
+
+    def test_keeps_bound_text_when_already_complete(self):
+        full = "-r 99190503582109340029"
+        event = self._event("pixiv_collection " + full)
+        self.assertEqual(resolve_command_args(event, "pixiv_collection", full), full)
+
+    def test_bare_command_yields_empty(self):
+        event = self._event("pixiv_collection")
+        self.assertEqual(resolve_command_args(event, "pixiv_collection", ""), "")
+
+    def test_tolerates_extra_whitespace(self):
+        event = self._event("pixiv_collection    -r   99190503582109340029")
+        self.assertEqual(
+            resolve_command_args(event, "pixiv_collection", "-r"),
+            "-r 99190503582109340029",
+        )
+
+    def test_does_not_match_longer_command_names(self):
+        # 前缀必须完整匹配，避免 "pixiv_collectionx" 被误当成我们的指令
+        event = self._event("pixiv_collectionx -r 1")
+        self.assertEqual(resolve_command_args(event, "pixiv_collection", "-r"), "-r")
+
+    def test_falls_back_when_message_is_unrelated(self):
+        event = self._event("随便说点什么")
+        self.assertEqual(resolve_command_args(event, "pixiv_collection", "abc"), "abc")
+
+    def test_handles_missing_message_str(self):
+        event = SimpleNamespace()
+        self.assertEqual(resolve_command_args(event, "pixiv_collection", "-r"), "-r")
+
+    def test_flag_parsing_works_on_recovered_text(self):
+        event = self._event("pixiv_collection -r 99190503582109340029")
+        recovered = resolve_command_args(event, "pixiv_collection", "-r")
+        recursive, rest = _extract_recursive_flag(recovered)
+        self.assertTrue(recursive)
+        self.assertEqual(parse_collection_id(rest), ILLUST_ONLY_ID)
+
+
+class CommandSignatureTests(unittest.TestCase):
+    """静态检查 main.py 里 GreedyStr 的写法。
+
+    必须标注 `GreedyStr` **且不能带默认值**：AstrBot 的 CommandFilter 在形参
+    有默认值时取的是默认值而非注解，GreedyStr 会静默失效——这正是
+    `/pixiv_collection -r <ID>` 只拿到 `-r` 的原因。用 AST 检查，避免为此导入 main.py。
+    """
+
+    GREEDY_COMMANDS = {
+        "pixiv_collection",
+        "pixiv_fanbox_dl",
+        "pixiv_fanbox_dl_view",
+    }
+
+    @classmethod
+    def _command_handlers(cls) -> dict:
+        source = (PLUGIN_ROOT / "main.py").read_text(encoding="utf-8")
+        handlers = {}
+        for node in ast.walk(ast.parse(source)):
+            if not isinstance(node, ast.AsyncFunctionDef):
+                continue
+            for decorator in node.decorator_list:
+                if not isinstance(decorator, ast.Call):
+                    continue
+                if getattr(decorator.func, "id", None) != "command":
+                    continue
+                if decorator.args and isinstance(decorator.args[0], ast.Constant):
+                    handlers[decorator.args[0].value] = node
+        return handlers
+
+    def test_greedy_commands_are_annotated(self):
+        handlers = self._command_handlers()
+
+        for name in sorted(self.GREEDY_COMMANDS):
+            with self.subTest(command=name):
+                node = handlers.get(name)
+                self.assertIsNotNone(node, f"main.py 中未找到命令 {name}")
+
+                params = node.args.args
+                self.assertGreaterEqual(len(params), 3, "期望 (self, event, args)")
+                last = params[-1]
+
+                self.assertIsInstance(
+                    last.annotation,
+                    ast.Name,
+                    f"{name} 的最后一个形参必须标注 GreedyStr",
+                )
+                self.assertEqual(last.annotation.id, "GreedyStr")
+
+                # 一旦带上默认值，AstrBot 就会取默认值而不是注解，GreedyStr 失效
+                self.assertEqual(
+                    node.args.defaults,
+                    [],
+                    f"{name} 的 GreedyStr 形参不能有默认值",
+                )
+
+    def test_main_module_defines_greedy_fallback(self):
+        """旧版 AstrBot 没有 GreedyStr，必须有兜底定义，否则插件直接加载失败。"""
+        source = (PLUGIN_ROOT / "main.py").read_text(encoding="utf-8")
+        self.assertIn("except Exception", source)
+        self.assertIn("class GreedyStr(str)", source)
 
 
 class PageBudgetTests(unittest.TestCase):

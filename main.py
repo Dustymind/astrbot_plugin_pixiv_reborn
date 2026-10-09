@@ -18,8 +18,17 @@ from .utils.config import PixivConfig, PixivConfigManager
 
 from .core.client import PixivClientWrapper
 from .handlers.illust import IllustHandler
-from .handlers.collection import CollectionHandler
+from .handlers.collection import CollectionHandler, resolve_command_args
 from .handlers.user import UserHandler
+
+try:
+    # AstrBot 用它标记「接收剩余全部参数」的形参。注意：必须写成 `args: GreedyStr`
+    # 且**不能给默认值** —— CommandFilter 在形参有默认值时取的是默认值而不是注解，
+    # GreedyStr 就失效了。没有这个标记时，形参只会拿到第一个 token。
+    from astrbot.core.star.filter.command import GreedyStr
+except Exception:  # pragma: no cover - 兼容没有该标记类型的旧版 AstrBot
+    class GreedyStr(str):
+        """旧版 AstrBot 无此类型：退化为普通 str，由 resolve_command_args 兜底。"""
 from .handlers.novel import NovelHandler
 from .handlers.subscribe import SubscribeHandler
 from .handlers.random_illust import RandomIllustHandler
@@ -134,7 +143,7 @@ class PixivSearchPlugin(Star):
             "name": "pixiv_search",
             "author": "vmoranv",
             "description": "Pixiv 图片搜索",
-            "version": "1.7.5.3",
+            "version": "1.7.5.4",
             "homepage": "https://github.com/vmoranv-reborn/astrbot_plugin_pixiv_search",
         }
 
@@ -184,12 +193,14 @@ class PixivSearchPlugin(Star):
             yield result
 
     @command("pixiv_collection")
-    async def pixiv_collection(self, event: AstrMessageEvent, args: str = ""):
+    async def pixiv_collection(self, event: AstrMessageEvent, args: GreedyStr):
         """解析 Pixiv 珍藏册（Collection），发送其中的插画与小说
 
-        用法: /pixiv_collection <珍藏册链接或ID>
+        用法: /pixiv_collection [-r] <珍藏册链接或ID>
+        `-r` 为递归模式，发送每个作品的全部页面。
         """
-        async for result in self.collection_handler.pixiv_collection(event, args):
+        arg_text = resolve_command_args(event, "pixiv_collection", args)
+        async for result in self.collection_handler.pixiv_collection(event, arg_text):
             yield result
 
     @command("pixiv_ranking")
@@ -475,9 +486,13 @@ class PixivSearchPlugin(Star):
             yield result
 
     @command("pixiv_fanbox_dl")
-    async def pixiv_fanbox_dl(self, event: AstrMessageEvent, args: str = ""):
-        """批量下载创作者 Fanbox 帖子"""
-        async for result in self.fanbox_handler.pixiv_fanbox_dl(event, args):
+    async def pixiv_fanbox_dl(self, event: AstrMessageEvent, args: GreedyStr):
+        """批量下载创作者 Fanbox 帖子
+
+        用法: /pixiv_fanbox_dl <creatorId|链接> [--limit N] [--since ...] ...
+        """
+        arg_text = resolve_command_args(event, "pixiv_fanbox_dl", args)
+        async for result in self.fanbox_handler.pixiv_fanbox_dl(event, arg_text):
             yield result
 
     @command("pixiv_fanbox_dl_status")
@@ -493,9 +508,13 @@ class PixivSearchPlugin(Star):
             yield result
 
     @command("pixiv_fanbox_dl_view")
-    async def pixiv_fanbox_dl_view(self, event: AstrMessageEvent, args: str = ""):
-        """查看/发送/打包已下载的 Fanbox 内容"""
-        async for result in self.fanbox_handler.pixiv_fanbox_dl_view(event, args):
+    async def pixiv_fanbox_dl_view(self, event: AstrMessageEvent, args: GreedyStr):
+        """查看/发送/打包已下载的 Fanbox 内容
+
+        用法: /pixiv_fanbox_dl_view <creatorId|目录名> [postId|--pack]
+        """
+        arg_text = resolve_command_args(event, "pixiv_fanbox_dl_view", args)
+        async for result in self.fanbox_handler.pixiv_fanbox_dl_view(event, arg_text):
             yield result
 
     async def terminate(self):

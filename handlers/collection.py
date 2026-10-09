@@ -137,6 +137,33 @@ def _extract_recursive_flag(text: str) -> tuple[bool, str]:
     return recursive, " ".join(remaining)
 
 
+def resolve_command_args(event, command_name: str, bound: str) -> str:
+    """取出指令之后的完整参数文本（含 `-r` 这类开关）。
+
+    为什么需要这个：AstrBot 的 `CommandFilter` 会把指令之后的文本按空白切开，
+    再**按位置**逐个绑定到处理函数的形参上，多出来的 token 直接丢弃
+    （见 `astrbot/core/star/filter/command.py` 的 `validate_and_convert_params`）。
+    所以对 `/pixiv_collection -r <ID>` 这种「开关 + 值」的写法，
+    只声明一个形参时只能拿到 `-r`，ID 会被丢掉。
+
+    主修法是在函数签名上标注 `GreedyStr`（AstrBot 的官方机制，会把剩余文本
+    合并成一个字符串）。本函数是兜底：从 `event.message_str` 补齐，以便在没有
+    `GreedyStr` 的旧版 AstrBot 上也能正确工作。唤醒前缀已在 AstrBot 的
+    waking_check 阶段剥离，因此 message_str 形如 `pixiv_collection -r 123`。
+    """
+    raw = str(getattr(event, "message_str", "") or "").strip()
+    bound_text = str(bound or "").strip()
+
+    first, _, rest = raw.partition(" ")
+    if first == command_name:
+        # 归一化连续空白，与 AstrBot 自身的参数处理保持一致
+        rest = " ".join(rest.split())
+        if len(rest) > len(bound_text):
+            return rest
+
+    return bound_text
+
+
 def _as_int(value: Any) -> Optional[int]:
     if isinstance(value, bool):
         return int(value)
