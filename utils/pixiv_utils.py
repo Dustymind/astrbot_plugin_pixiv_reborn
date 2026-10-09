@@ -518,6 +518,15 @@ async def authenticate(client: AppPixivAPI) -> bool:
         return False
 
 
+async def _throttle_sleep(index: int, seconds: float) -> None:
+    """按张控速：第一张不等待，之后每张之间 sleep 指定秒数。
+
+    递归发送整本珍藏册时可能有几百张图，需要避免触发平台侧发送频率限制。
+    """
+    if index > 0 and seconds and seconds > 0:
+        await asyncio.sleep(seconds)
+
+
 async def send_pixiv_image(
     client: AppPixivAPI,
     event: Any,
@@ -525,6 +534,7 @@ async def send_pixiv_image(
     detail_message: str = None,
     show_details: bool = True,
     send_all_pages: bool = False,
+    throttle_seconds: float = 0.0,
 ):
     """
     通用Pixiv图片下载与发送函数。
@@ -565,7 +575,8 @@ async def send_pixiv_image(
             url_obj = SinglePageUrls(illust)
         url_sources.append((url_obj, detail_message))
 
-    for url_obj, msg in url_sources:
+    for url_index, (url_obj, msg) in enumerate(url_sources):
+        await _throttle_sleep(url_index, throttle_seconds)
         quality_preference = ["original", "large", "medium"]
         start_index = (
             quality_preference.index(_config.image_quality)
@@ -817,6 +828,7 @@ async def send_forward_message(
     send_all_pages: bool = False,
     summary_text: Optional[str] = None,
     single_batch: bool = False,
+    throttle_seconds: float = 0.0,
 ):
     """
     直接下载图片并组装 nodes，避免不兼容消息类型。
@@ -855,6 +867,7 @@ async def send_forward_message(
                 url_obj = SinglePageUrls(img)
             image_items.append(("image", img, url_obj, detail_message))
 
+    forwarded_index = 0
     for i in range(0, len(image_items), batch_size):
         batch_items = image_items[i : i + batch_size]
         nodes_list = []
@@ -862,6 +875,8 @@ async def send_forward_message(
             nodes_list.append(Node(name=nickname, content=[Plain(summary_text)]))
         async with aiohttp.ClientSession() as session:
             for item_type, img, url_obj, detail_message in batch_items:
+                await _throttle_sleep(forwarded_index, throttle_seconds)
+                forwarded_index += 1
                 if item_type == "ugoira":
                     # 使用通用函数处理动图
                     content = await process_ugoira_for_content(

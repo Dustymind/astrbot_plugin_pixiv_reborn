@@ -89,6 +89,20 @@ class PixivConfig:
         except (TypeError, ValueError):
             return default
 
+    def _get_int_strict(self, key: str, default: int) -> int:
+        """读取整数配置，但保留 0 这个合法取值。
+
+        `_get_int` 用的是 `int(value or default)`，会把 0 当成空值替换为 default。
+        对于「0 表示不限速」这类配置项，必须用本方法。
+        """
+        raw = self.config.get(key, default)
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            return default
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return default
+
     def _load_config(self):
         """加载配置项"""
         self.proxy = self.config.get("proxy", "").strip()
@@ -111,6 +125,15 @@ class PixivConfig:
         self.collection_include_text = self.config.get("collection_include_text", True)
         self.collection_fetch_concurrency = self._get_int(
             "collection_fetch_concurrency", 3
+        )
+        # 递归模式（-r）会发送每个作品的全部页面，图量很大，额外限页 + 控速
+        self.collection_recursive_max_pages = self._get_int_strict(
+            "collection_recursive_max_pages", 100
+        )
+        # 0 是合法取值，表示不限速，因此不能用 _get_int
+        self.collection_recursive_interval_seconds = max(
+            0,
+            self._get_int_strict("collection_recursive_interval_seconds", 1),
         )
         self.show_filter_result = self.config.get("show_filter_result", True)
         self.single_response_mode = self.config.get("single_response_mode", True)
@@ -277,6 +300,12 @@ class PixivConfigManager:
                 "max": 8,
                 "hidden": True,
             },
+            "collection_recursive_max_pages": {"type": "int", "min": 1, "max": 1000},
+            "collection_recursive_interval_seconds": {
+                "type": "int",
+                "min": 0,
+                "max": 60,
+            },
             "show_filter_result": {"type": "bool"},
             "single_response_mode": {"type": "bool"},
             "show_details": {"type": "bool"},
@@ -354,6 +383,8 @@ class PixivConfigManager:
             "collection_max_works",
             "collection_include_novel",
             "collection_include_text",
+            "collection_recursive_max_pages",
+            "collection_recursive_interval_seconds",
             "show_filter_result",
             "single_response_mode",
             "show_details",

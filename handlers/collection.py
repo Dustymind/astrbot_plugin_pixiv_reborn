@@ -70,6 +70,9 @@ MAX_LINKS_IN_SUMMARY = 20
 # 发送失败降级为文本清单时，最多列出多少个作品
 MAX_FALLBACK_ITEMS = 30
 
+# 递归模式的命令行开关
+RECURSIVE_FLAGS = ("-r", "--recursive", "递归")
+
 
 class CollectionFetchError(Exception):
     """珍藏册抓取失败。message 面向用户，直接可展示。"""
@@ -117,6 +120,21 @@ def parse_collection_id(text: str) -> Optional[str]:
         return stripped
     match = COLLECTION_URL_RE.search(stripped)
     return match.group(1) if match else None
+
+
+def _extract_recursive_flag(text: str) -> tuple[bool, str]:
+    """剥离命令参数里的递归开关，返回 (是否递归, 剩余文本)。
+
+    开关位置不限，`/pixiv_collection -r <ID>` 与 `/pixiv_collection <ID> -r` 等价。
+    """
+    recursive = False
+    remaining: List[str] = []
+    for token in (text or "").split():
+        if token.lower() in RECURSIVE_FLAGS:
+            recursive = True
+        else:
+            remaining.append(token)
+    return recursive, " ".join(remaining)
 
 
 def _as_int(value: Any) -> Optional[int]:
@@ -288,7 +306,9 @@ def normalize_collection(
     return result
 
 
-def format_collection_header(data: CollectionData) -> str:
+def format_collection_header(
+    data: CollectionData, *, recursive: bool = False, max_pages: Optional[int] = None
+) -> str:
     """构建珍藏册的信息头。"""
     lines = ["📚 Pixiv 珍藏册", f"标题: {data.title}"]
     author_line = f"作者: {data.author}"
@@ -311,6 +331,12 @@ def format_collection_header(data: CollectionData) -> str:
     if data.links:
         counts.append(f"外链 {len(data.links)}")
     lines.append("内容: " + " / ".join(counts))
+
+    if recursive:
+        mode_line = "模式: 递归（发送每个作品的全部页面）"
+        if max_pages:
+            mode_line += f"，页数上限 {max_pages}"
+        lines.append(mode_line)
 
     stats = []
     if data.bookmark_count is not None:
@@ -364,7 +390,10 @@ class CollectionHandler:
         self.pixiv_config = pixiv_config
 
     async def pixiv_collection(self, event: AstrMessageEvent, arg: str = ""):
-        """处理 /pixiv_collection 命令"""
+        """处理 /pixiv_collection 命令
+
+        支持 `-r` 开关：递归发送每个作品的全部页面（行为同逐个 /pixiv_specific）。
+        """
         cleaned = (arg or "").strip()
 
         if cleaned.lower() == "help":
@@ -379,6 +408,8 @@ class CollectionHandler:
             yield event.plain_result("珍藏册解析功能已在配置中关闭。")
             return
 
+        recursive, cleaned = _extract_recursive_flag(cleaned)
+
         collection_id = parse_collection_id(cleaned)
         if not collection_id:
             yield event.plain_result(
@@ -388,15 +419,25 @@ class CollectionHandler:
             )
             return
 
-        async for result in self.handle_collection_id(event, collection_id):
+        async for result in self.handle_collection_id(
+            event, collection_id, recursive=recursive
+        ):
             yield result
 
-    async def handle_collection_id(self, event: AstrMessageEvent, collection_id: str):
+    async def handle_collection_id(
+        self,
+        event: AstrMessageEvent,
+        collection_id: str,
+        *,
+        recursive: bool = False,
+    ):
         """抓取并发送一个珍藏册。URL 自动识别与命令都走这里。"""
         if not self.pixiv_config.collection_enabled:
             return
 
-        logger.info(f"Pixiv 插件：正在解析珍藏册 - ID: {collection_id}")
+        logger.info(
+            f"Pixiv 插件：正在解析珍藏册 - ID: {collection_id}，递归模式: {recursive}"
+        )
 
         proxy = self.pixiv_config.effective_proxy
         logger.debug(f"Pixiv 插件：珍藏册抓取代理 = {proxy or '未使用（直连）'}")
@@ -415,7 +456,13 @@ class CollectionHandler:
             yield event.plain_result("解析珍藏册时发生未知错误，请查看日志。")
             return
 
-        header = format_collection_header(data)
+        header = format_collection_header(
+            data,
+            recursive=recursive,
+            max_pages=(
+                self.pixiv_config.collection_recursive_max_pages if recursive else None
+            ),
+        )
 
         if self.pixiv_config.collection_include_text:
             trailing = format_trailing_sections(data)
@@ -459,6 +506,7 @@ class CollectionHandler:
                 display_tag_str=f"珍藏册:{data.title}",
                 summary_prefix=summary_prefix,
                 plain_header=None if emitted else body_text,
+                recursive=recursive,
             ):
                 yield result
             emitted = True
@@ -480,6 +528,7 @@ class CollectionHandler:
                     )
                 ),
                 plain_header=None if emitted else body_text,
+                recursive=recursive,
             ):
                 yield result
             emitted = True
@@ -567,6 +616,7 @@ class CollectionHandler:
         display_tag_str: str,
         summary_prefix: Optional[str],
         plain_header: Optional[str],
+        recursive: bool = False,
     ):
         """发送一组作品；单组失败时降级为文本清单，避免整个珍藏册解析崩掉。
 
@@ -583,6 +633,7 @@ class CollectionHandler:
                 display_tag_str=display_tag_str,
                 summary_prefix=summary_prefix,
                 plain_header=plain_header,
+                recursive=recursive,
             ):
                 yield result
             return
@@ -621,9 +672,18 @@ class CollectionHandler:
         display_tag_str: str,
         summary_prefix: Optional[str],
         plain_header: Optional[str],
+        recursive: bool = False,
     ):
         """按配置过滤并发送一组作品。"""
         max_works = max(1, int(self.pixiv_config.collection_max_works or 1))
+
+        # 递归模式行为对齐 /pixiv_specific：逐条发送每个作品的全部页面。
+        # 因此强制关闭单条合并转发——几十上百张图塞进一条转发既不现实、
+        # 也拿不到「按张控速」的效果。
+        single_response_mode = (
+            False if recursive else self.pixiv_config.single_response_mode
+        )
+
         config = FilterConfig(
             r18_mode=self.pixiv_config.r18_mode,
             filter_r18g_only=self.pixiv_config.filter_r18g_only,
@@ -633,7 +693,7 @@ class CollectionHandler:
             return_count=max(1, min(len(works), max_works)),
             logger=logger,
             show_filter_result=self.pixiv_config.show_filter_result,
-            single_response_mode=self.pixiv_config.single_response_mode,
+            single_response_mode=single_response_mode,
             show_details=self.pixiv_config.show_details,
             excluded_tags=[],
             forward_threshold=self.pixiv_config.forward_threshold,
@@ -641,7 +701,17 @@ class CollectionHandler:
             enable_stat_filters=not is_novel,
         )
 
-        if self.pixiv_config.single_response_mode:
+        send_options: dict = {}
+        if recursive:
+            send_options = {
+                "send_all_pages": True,
+                "max_pages": self.pixiv_config.collection_recursive_max_pages,
+                "throttle_seconds": (
+                    self.pixiv_config.collection_recursive_interval_seconds
+                ),
+            }
+
+        if single_response_mode:
             async for result in process_and_send_illusts_sorted(
                 works,
                 config,
@@ -652,6 +722,7 @@ class CollectionHandler:
                 send_forward_message,
                 is_novel=is_novel,
                 summary_prefix=summary_prefix,
+                **send_options,
             ):
                 yield result
             return
@@ -668,5 +739,6 @@ class CollectionHandler:
             send_pixiv_image,
             send_forward_message,
             is_novel=is_novel,
+            **send_options,
         ):
             yield result
