@@ -134,7 +134,7 @@ class PixivSearchPlugin(Star):
             "name": "pixiv_search",
             "author": "vmoranv",
             "description": "Pixiv 图片搜索",
-            "version": "1.7.5.1",
+            "version": "1.7.5.2",
             "homepage": "https://github.com/vmoranv-reborn/astrbot_plugin_pixiv_search",
         }
 

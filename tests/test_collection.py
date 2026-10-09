@@ -357,6 +357,7 @@ def _collection_config(**overrides) -> SimpleNamespace:
         collection_include_text=True,
         collection_fetch_concurrency=3,
         proxy="",
+        effective_proxy="",
         r18_mode="过滤 R18",
         filter_r18g_only=False,
         ai_filter_mode="显示 AI 作品",

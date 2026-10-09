@@ -189,15 +189,29 @@ class PixivConfig:
             "[pixivpy3 文档](https://pypi.org/project/pixivpy3/) 或[这里](https://gist.github.com/karakoo/5e7e0b1f3cc74cbcb7fce1c778d3709e)。"
         )
 
+    @property
+    def effective_proxy(self) -> str:
+        """实际生效的代理地址。
+
+        插件自身的 `proxy` 配置优先；未配置时回退到环境变量。
+
+        为什么要回退：pixivpy3 底层用 `requests`，而 `requests` **默认就会读**
+        `HTTPS_PROXY` / `HTTP_PROXY` 等环境变量。也就是说"只配系统代理、插件里留空"
+        本来就能让 API 调用走代理。如果这里不跟着回退，就会出现
+        "API 能通、但 aiohttp 走的珍藏册抓取与图片下载直连超时"这种半通不通的状态。
+        """
+        if self.proxy:
+            return self.proxy
+
+        for name in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+            value = (os.getenv(name) or "").strip()
+            if value:
+                return value
+        return ""
+
     def get_config_info(self) -> str:
         """获取配置信息字符串"""
-        effective_proxy = (
-            self.proxy
-            or os.getenv("HTTPS_PROXY", "").strip()
-            or os.getenv("https_proxy", "").strip()
-            or os.getenv("HTTP_PROXY", "").strip()
-            or os.getenv("http_proxy", "").strip()
-        )
+        effective_proxy = self.effective_proxy
         return (
             f"refresh_token={'已设置' if self.refresh_token else '未设置'}, "
             f"return_count={self.return_count}, r18_mode='{self.r18_mode}', "
@@ -222,8 +236,9 @@ class PixivConfig:
     def get_requests_kwargs(self) -> Dict[str, Any]:
         """获取请求参数"""
         kwargs = {}
-        if self.proxy:
-            kwargs["proxies"] = {"http": self.proxy, "https": self.proxy}
+        proxy = self.effective_proxy
+        if proxy:
+            kwargs["proxies"] = {"http": proxy, "https": proxy}
         return kwargs
 
     def save_config(self):

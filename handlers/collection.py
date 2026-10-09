@@ -145,7 +145,7 @@ async def fetch_collection(
     client_timeout = aiohttp.ClientTimeout(total=timeout, connect=10, sock_read=20)
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=True) as session:
             async with session.get(
                 url,
                 headers=headers,
@@ -155,9 +155,15 @@ async def fetch_collection(
                 status = response.status
                 text = await response.text()
     except asyncio.TimeoutError:
-        raise CollectionFetchError("抓取珍藏册超时，请稍后重试。")
+        raise CollectionFetchError(
+            "抓取珍藏册超时，请稍后重试。"
+            "若本机无法直连 pixiv，请在插件配置里填写 `proxy`（如 http://127.0.0.1:7890）。"
+        )
     except aiohttp.ClientError as exc:
-        raise CollectionFetchError(f"抓取珍藏册失败（网络异常）：{exc}")
+        raise CollectionFetchError(
+            f"抓取珍藏册失败（网络异常）：{exc}"
+            "。若本机无法直连 pixiv，请检查插件配置里的 `proxy`。"
+        )
 
     if status == 404:
         raise CollectionFetchError(
@@ -392,10 +398,11 @@ class CollectionHandler:
 
         logger.info(f"Pixiv 插件：正在解析珍藏册 - ID: {collection_id}")
 
+        proxy = self.pixiv_config.effective_proxy
+        logger.debug(f"Pixiv 插件：珍藏册抓取代理 = {proxy or '未使用（直连）'}")
+
         try:
-            envelope = await fetch_collection(
-                collection_id, proxy=self.pixiv_config.proxy
-            )
+            envelope = await fetch_collection(collection_id, proxy=proxy)
             data = normalize_collection(collection_id, envelope)
         except CollectionFetchError as exc:
             logger.warning(

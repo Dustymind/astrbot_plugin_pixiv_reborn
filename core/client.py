@@ -30,11 +30,22 @@ class PixivClientWrapper:
         self._last_auth_error_logged_at = 0.0
         self._auth_had_failure = False
 
-        # 根据是否配置代理选择不同的 API 客户端
-        if pixiv_config.proxy:
+        # 根据是否存在可用代理选择不同的 API 客户端。
+        # 这里的判断必须和 requests 的默认行为对齐（requests 会自动读环境变量代理），
+        # 否则"插件里留空、只配了系统代理"的环境会掉进直连/ByPassSni 分支，
+        # 而 aiohttp（珍藏册抓取、图片下载）又不读环境变量，最终呈现为半通不通。
+        effective_proxy = getattr(pixiv_config, "effective_proxy", "") or getattr(
+            pixiv_config, "proxy", ""
+        )
+        if effective_proxy:
             # 有代理时使用标准 AppPixivAPI
             self.client_api = AppPixivAPI(**pixiv_config.get_requests_kwargs())
-            logger.info("Pixiv 插件：使用代理模式 (AppPixivAPI)")
+            proxy_source = (
+                "插件配置" if getattr(pixiv_config, "proxy", "") else "环境变量"
+            )
+            logger.info(
+                f"Pixiv 插件：使用代理模式 (AppPixivAPI)，代理来源：{proxy_source}"
+            )
         elif pixiv_config.api_proxy_host:
             # 使用 API 反代服务器
             self.client_api = AppPixivAPI()

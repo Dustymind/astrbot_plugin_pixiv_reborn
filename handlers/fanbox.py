@@ -1,6 +1,5 @@
 import asyncio
 import re
-import os
 import shlex
 import html as html_lib
 from pathlib import Path
@@ -102,17 +101,8 @@ class FanboxHandler:
         return mode
 
     def _get_proxy(self) -> str | None:
-        if self.pixiv_config.proxy:
-            proxy = self.pixiv_config.proxy.strip()
-            if proxy:
-                return proxy
-
-        # 兼容系统级代理环境变量
-        for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
-            value = os.getenv(key, "").strip()
-            if value:
-                return value
-        return None
+        # 统一走 PixivConfig.effective_proxy（插件配置优先，回退系统代理环境变量）
+        return self.pixiv_config.effective_proxy or None
 
     def _fanbox_user_agent(self) -> str:
         ua = str(getattr(self.pixiv_config, "fanbox_user_agent", "") or "").strip()

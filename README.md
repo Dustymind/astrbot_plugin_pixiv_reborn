@@ -13,6 +13,7 @@
 - 🎨 **多种搜索方式**: 支持标签搜索、用户搜索、作品详情查询
 - 📚 **内容多样化**: 插画、小说、排行榜、推荐作品一应俱全
 - 🧩 **Fanbox 支持**: 可查询 Fanbox 创作者、帖子详情与推荐创作者
+- 🗂️ **珍藏册解析**: 贴一条珍藏册链接即可拉取其中全部插画/小说（走网页版接口）
 - 🎬 **动图支持**: 自动识别并转换 Pixiv 动图（ugoira）为GIF格式
 - 🔍 **高级搜索**: 深度搜索、与搜索、相关作品推荐
 - 🛡️ **内容控制**: 灵活的 R18 内容过滤配置
@@ -90,6 +91,10 @@
 - `/pixiv_illust_comments <作品ID> [偏移量]` - 获取作品评论
 - `/pixiv_novel_comments <小说ID> [偏移量]` - 获取小说评论
 
+### 珍藏册（Collection）
+- `/pixiv_collection <珍藏册链接或ID>` - 解析珍藏册，发送其中的插画与小说
+- 直接发送 `https://www.pixiv.net/collections/<ID>` 链接也会自动解析（受 `collection_enabled` 控制）
+
 ### 特殊功能
 - `/pixiv_ai_show_settings <设置>` - 设置是否展示AI生成作品
 
@@ -97,6 +102,61 @@
 - `/pixiv_subscribe_add <画师ID>` - 订阅画师
 - `/pixiv_subscribe_remove <画师ID>` - 取消订阅画师
 - `/pixiv_subscribe_list` - 查看当前订阅列表
+
+## 🗂️ 珍藏册（Collection）功能
+
+珍藏册是 pixiv 的**网页版**功能（日文「コレクション」，中文官方译名「珍藏册」），
+把多个插画、小说、纯文本和外部链接拼贴在同一页展示。
+
+### 怎么用
+
+**方式一：直接贴链接**（最常用）
+
+在聊天里发送珍藏册链接即可，无需任何命令前缀：
+
+```
+https://www.pixiv.net/collections/99190503582109340029
+```
+
+**方式二：用命令**
+
+```
+/pixiv_collection https://www.pixiv.net/collections/99190503582109340029
+/pixiv_collection 99190503582109340029
+```
+
+以下链接形态都支持（也支持直接给裸 ID）：
+
+- `https://www.pixiv.net/collections/<珍藏册ID>`
+- `https://www.pixiv.net/collection/<珍藏册ID>`
+- `https://www.pixiv.net/users/<用户ID>/collections/<珍藏册ID>`
+
+### 相关配置
+
+| 配置项 | 默认 | 说明 |
+|--------|------|------|
+| `collection_enabled` | true | 总开关。关闭后珍藏册链接会被完全忽略 |
+| `collection_max_works` | 30 | 单次最多发送的作品数（插画与小说**分别**受此上限约束） |
+| `collection_include_novel` | true | 是否发送珍藏册内的小说 |
+| `collection_include_text` | true | 是否把纯文本块与外链汇总成摘要一并发送 |
+| `collection_fetch_concurrency` | 3 | 作品详情补全的并发数（WebUI 中隐藏，非必要不修改） |
+
+默认 `single_response_mode=true` 时会用合并转发发出，一条转发内含信息头 + 图片 + 详情。
+
+### 注意事项
+
+- **仅支持公开珍藏册**。私密珍藏册需要登录态，插件无法读取，会返回明确提示。
+- **需要能访问 pixiv 的网络**。珍藏册走网页版接口 `www.pixiv.net`，在中国大陆必须配代理。
+  插件既支持在配置里填 `proxy`（如 `http://127.0.0.1:7890`），也会回退读取
+  `HTTPS_PROXY` / `HTTP_PROXY` 环境变量（与 `requests` 的默认行为保持一致）。
+  **推荐显式填 `proxy`**，行为最可预期。
+- **作品会被自动去重**。珍藏册是拼贴版式，同一作品可能被引用多个不同页
+  （实测 27 个格子只对应 12 个作品），插件按作品 ID 去重后再发送。
+- **属非官方接口**。珍藏册在 pixiv App 里不存在，官方 App API 没有对应端点
+  （`/v1/collection/*` 返回 404），因此本功能直接调用网页版前端使用的 AJAX 接口
+  `https://www.pixiv.net/ajax/collection/{id}`。该接口匿名可读，但 pixiv 改版即可能失效。
+- **不要做成高频订阅/推送**。pixiv 对大批量枚举会吊销 `refresh_token`（账号级，
+  换 IP 无效）。插件已内置限速（单册最多补全 100 个作品、请求间隔 0.2 秒、默认并发 3）。
 
 ## 🚀 快速开始
 
@@ -190,6 +250,12 @@
 # 特辑功能
 /pixiv_showcase_article 123456
 
+# 珍藏册功能
+/pixiv_collection https://www.pixiv.net/collections/99190503582109340029
+/pixiv_collection 99190503582109340029
+# 或者直接在聊天里贴链接，无需命令：
+# https://www.pixiv.net/collections/99190503582109340029
+
 # 获取帮助
 /pixiv_help
 
@@ -250,6 +316,11 @@
 | `fanbox_dl_impersonate` | 批量下载 TLS 指纹伪装（如 `edge101`/`chrome131`，被拦时首选） | 留空 |
 | `fanbox_dl_*` | 批量下载策略参数：`page_limit`(300) `max_429_retries`(4) `max_cf_consecutive`(3) `max_retries`(5) `concurrency`(4) `prefetch_queue`(4) `pack_size_mb`(100) `send_limit_mb`(1024，--pack 总大小发送上限，0 不拦截)，非必要不修改 | 括号内为默认值 |
 | `return_count` | 每次搜索返回的图片数量 (1-10) | 1 |
+| `collection_enabled` | 是否启用珍藏册（Collection）解析 | true |
+| `collection_max_works` | 珍藏册单次最多发送的作品数（插画与小说分别计算，1-200） | 30 |
+| `collection_include_novel` | 珍藏册是否包含小说 | true |
+| `collection_include_text` | 珍藏册是否输出文本块与外链摘要 | true |
+| `collection_fetch_concurrency` | 珍藏册详情补全并发数（1-8，非必要不修改） | 3 |
 | `r18_mode` | R18内容处理模式 | 过滤 R18 |
 | `filter_r18g_only` | 是否额外过滤 R18G | false |
 | `ai_filter_mode` | AI作品显示设置 | 显示 AI 作品 |
@@ -270,7 +341,7 @@
 | `subscription_enabled` | 是否启用订阅功能 | true |
 | `subscription_force_forward` | 订阅消息是否强制使用合并转发（即便仅一条） | true |
 | `subscription_check_interval_minutes` | 订阅更新检查间隔（分钟） | 30 |
-| `proxy` | 网络代理地址，如 `http://127.0.0.1:7890` | 留空 |
+| `proxy` | 网络代理地址，如 `http://127.0.0.1:7890`；留空时回退读取 `HTTPS_PROXY`/`HTTP_PROXY` 环境变量 | 留空 |
 | `image_proxy_host` | 图片反代服务器地址 | i.pixiv.re |
 | `use_image_proxy` | 是否启用图片反代服务器（`url` 发送模式建议开启） | true |
 | `random_search_min_interval` | 随机搜索最短间隔（分钟） | 60 |
@@ -286,6 +357,8 @@
 **API 认证失败**: 检查 `refresh_token` 是否有效和正确配置
 
 **无代理直连失败**: 若在中国大陆无法使用代理且 ByPassSniApi 模式失效，可自建 Cloudflare Workers 反向代理。详见 [vmoranv/pixiv-proxy](https://github.com/vmoranv/pixiv-proxy) 仓库，部署后在插件配置中设置 `api_proxy_host` 为你的 Worker 域名。
+
+**珍藏册抓取超时（提示"抓取珍藏册超时"）**: 珍藏册走 `www.pixiv.net` 网页版接口，中国大陆必须走代理。请确认插件配置里的 `proxy` 已填写（如 `http://127.0.0.1:7890`），或至少设置了 `HTTPS_PROXY` / `HTTP_PROXY` 环境变量。注意 `api_proxy_host`（Cloudflare Worker 反代）**不能**用于珍藏册——它只反代 `app-api.pixiv.net`，不覆盖 `www.pixiv.net`。
 
 **Fanbox 帖子获取失败**: 可能触发 Cloudflare 或帖子受限。可先用 `/pixiv_fanbox_creator` 查看公开帖子，必要时配置 `fanbox_sessid`；若官方仍 403，再配置 `fanbox_cf_clearance` 和 `fanbox_user_agent`（与浏览器一致）；也可切换 `fanbox_data_source=nekohouse` 仅走归档数据。
 

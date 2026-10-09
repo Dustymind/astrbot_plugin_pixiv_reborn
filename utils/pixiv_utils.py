@@ -36,6 +36,24 @@ def init_pixiv_utils(client: AppPixivAPI, config: PixivConfig, temp_dir: Path):
     _temp_dir = temp_dir
 
 
+def _effective_proxy(config=None) -> str:
+    """读取实际生效的代理地址。
+
+    插件配置里的 `proxy` 优先；未配置时回退到环境变量（与 `requests` 的默认行为一致）。
+    这样"只配了系统代理、插件里留空"的环境下，aiohttp 也能跟着走代理——
+    否则会出现 API 能通、但图片下载直连超时的半通不通状态。
+    """
+    if config is None:
+        config = _config
+    if config is None:
+        return ""
+
+    proxy = str(getattr(config, "effective_proxy", "") or "").strip()
+    if not proxy:
+        proxy = str(getattr(config, "proxy", "") or "").strip()
+    return proxy
+
+
 def get_proxied_image_url(original_url: str, use_proxy: bool = True) -> str:
     """
     将原始 Pixiv 图片 URL 转换为反代 URL
@@ -382,10 +400,11 @@ async def download_image(
         default_headers = {"Referer": "https://app-api.pixiv.net/"}
         if headers:
             default_headers.update(headers)
-        # 如果没有配置代理，使用图片反代 URL
+        # 只有确实没有可用代理时才退化为图片反代（环境变量代理也算可用）
+        effective_proxy = _effective_proxy()
         use_image_proxy = (
             bool(getattr(_config, "use_image_proxy", True)) if _config else True
-        ) and not bool(_config.proxy if _config else None)
+        ) and not effective_proxy
         actual_url = get_proxied_image_url(url, use_proxy=use_image_proxy)
 
         # 添加超时控制
@@ -394,7 +413,7 @@ async def download_image(
         async with session.get(
             actual_url,
             headers=default_headers,
-            proxy=_config.proxy or None,
+            proxy=effective_proxy or None,
             timeout=timeout,
         ) as response:
             if response.status == 200:
